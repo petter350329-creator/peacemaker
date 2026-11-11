@@ -24,21 +24,6 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import java.util.Locale
 
-/** 화면(Activity)과 서비스가 같이 보는 상태 */
-object RunState {
-    enum class Phase { IDLE, PREPARING, RUNNING, FINISHED }
-
-    @Volatile var phase = Phase.IDLE
-    @Volatile var targetKmh = 9.0
-    @Volatile var goalKm = 4.0
-    @Volatile var quietMode = true
-    @Volatile var gpsAccuracy: Float? = null
-    @Volatile var engine: PaceEngine? = null
-    @Volatile var lastMessage: String = ""
-
-    val PRESETS = doubleArrayOf(6.0, 9.0, 12.0, 15.0)
-}
-
 class RunService : Service() {
 
     companion object {
@@ -168,7 +153,14 @@ class RunService : Service() {
         if (RunState.phase != RunState.Phase.PREPARING) return
         val e = RunState.engine ?: return
         e.quietMode = RunState.quietMode
-        e.start(System.currentTimeMillis())
+        val now = System.currentTimeMillis()
+        e.start(now)
+        RunState.startMs = now
+        RunState.initialTargetKmh = RunState.targetKmh
+        RunState.lastSavedId = null
+        RunState.clearTrack()
+        val la = RunState.lastLat; val lo = RunState.lastLon
+        if (la != null && lo != null) RunState.addPoint(TrackPoint(0.0, la, lo, 0.0, 0.0, RunState.targetKmh))
         RunState.phase = RunState.Phase.RUNNING
         speak("출발! 목표 시속 ${PaceEngine.fmtKmh(RunState.targetKmh)}")
     }
@@ -190,6 +182,7 @@ class RunService : Service() {
 
     private fun handleLocation(loc: Location) {
         RunState.gpsAccuracy = loc.accuracy
+        if (loc.accuracy <= 25f) { RunState.lastLat = loc.latitude; RunState.lastLon = loc.longitude }
         if (!gpsReadyAnnounced && loc.accuracy <= 15f && RunState.phase == RunState.Phase.PREPARING) {
             gpsReadyAnnounced = true
             speak("GPS 준비됐어요")
@@ -200,9 +193,40 @@ class RunService : Service() {
         }
         val e = RunState.engine ?: return
         val wasFinished = e.finished
+        val prevDist = e.distanceM
         val msgs = e.onLocation(loc.latitude, loc.longitude, loc.accuracy, System.currentTimeMillis(), speed)
         for (m in msgs) speak(m)
-        if (!wasFinished && e.finished) RunState.phase = RunState.Phase.FINISHED
+        if (RunState.phase == RunState.Phase.RUNNING && e.distanceM > prevDist) {
+            RunState.addPoint(
+                TrackPoint(e.elapsedS, loc.latitude, loc.longitude, e.distanceM, e.currentKmh ?: 0.0, e.targetKmh)
+            )
+        }
+        if (!wasFinished && e.finished) {
+            RunState.phase = RunState.Phase.FINISHED
+            saveRecord(finished = true)
+        }
+    }
+
+    /** 완주했거나, 50m 이상 뛰고 정지한 경우 기록 저장 */
+    private fun saveRecord(finished: Boolean) {
+        val e = RunState.engine ?: return
+        if (e.distanceM < 50) return
+        val rec = RunRecord(
+            id = RunState.startMs,
+            goalM = e.goalM,
+            distanceM = e.distanceM,
+            durationS = e.elapsedS,
+            diffS = e.diffS,
+            initialTargetKmh = RunState.initialTargetKmh,
+            finished = finished,
+            points = RunState.trackSnapshot(),
+        )
+        try {
+            RunRepository.save(this, rec)
+            RunState.lastSavedId = rec.id
+        } catch (ex: Exception) {
+            RunState.lastMessage = "기록 저장 실패: ${ex.message}"
+        }
     }
 
     private fun speak(text: String) {
@@ -267,6 +291,10 @@ class RunService : Service() {
     }
 
     private fun stopAll() {
+        if (RunState.phase == RunState.Phase.RUNNING) {
+            RunState.engine?.tick(System.currentTimeMillis())
+            saveRecord(finished = false)
+        }
         handler.removeCallbacks(ticker)
         try { locationManager.removeUpdates(listener) } catch (_: Exception) {}
         wakeLock?.let { if (it.isHeld) it.release() }

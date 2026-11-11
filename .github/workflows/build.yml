@@ -33,6 +33,19 @@ jobs:
       - name: Build
         run: gradle :app:assembleDebug --stacktrace
 
+      # 화면 스크린샷 (디자인 확인용)
+      - name: Screenshots
+        continue-on-error: true
+        run: gradle :app:testDebugUnitTest --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: |
+            app/build/screenshots/
+            app/build/reports/tests/
+
       - name: Rename APK
         run: cp app/build/outputs/apk/debug/app-debug.apk pacemaker-${{ github.run_number }}.apk
 
