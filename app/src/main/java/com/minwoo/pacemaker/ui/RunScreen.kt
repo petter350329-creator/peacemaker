@@ -246,11 +246,12 @@ private fun TargetChip(ui: LiveUi, modifier: Modifier) {
 @Composable
 fun StatTile(label: String, value: String, sub: String?, valueColor: Color, modifier: Modifier = Modifier) {
     Column(
-        modifier.clip(RoundedCornerShape(18.dp)).background(P.Surface).padding(vertical = 12.dp, horizontal = 12.dp),
+        modifier.height(96.dp).clip(RoundedCornerShape(18.dp)).background(P.Surface).padding(vertical = 12.dp, horizontal = 12.dp),
+        verticalArrangement = Arrangement.SpaceBetween,
     ) {
         Text(label, color = P.Muted, style = MaterialTheme.typography.labelMedium)
         Spacer(Modifier.height(4.dp))
-        Text(value, color = valueColor, fontSize = 24.sp, fontWeight = FontWeight.Black, letterSpacing = (-0.5).sp, maxLines = 1)
+        Text(value, color = valueColor, fontSize = 24.sp, lineHeight = 26.sp, fontWeight = FontWeight.Black, letterSpacing = (-0.5).sp, maxLines = 1)
         Text(sub ?: " ", color = P.Muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
     }
 }
