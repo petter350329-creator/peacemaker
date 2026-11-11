@@ -59,5 +59,8 @@ jobs:
         with:
           tag_name: build-${{ github.run_number }}
           name: 페이스메이커 빌드 ${{ github.run_number }}
-          files: pacemaker-${{ github.run_number }}.apk
+          files: |
+            pacemaker-${{ github.run_number }}.apk
+            app/build/screenshots/*.png
+          fail_on_unmatched_files: false
           make_latest: true
