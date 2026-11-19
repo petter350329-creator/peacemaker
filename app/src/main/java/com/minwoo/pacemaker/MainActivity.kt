@@ -174,6 +174,7 @@ private fun App() {
             bpm = MetronomeState.bpm,
             volume = MetronomeState.volume,
             accentEvery = MetronomeState.accentEvery,
+            duckMusic = MetronomeState.duckMusic,
             beatCount = MetronomeState.beatCount,
             elapsedS = if (MetronomeState.playing) (System.currentTimeMillis() - MetronomeState.startedAtMs) / 1000.0 else 0.0,
         )
@@ -196,6 +197,11 @@ private fun App() {
             },
             onVolume = { v -> MetronomeState.volume = v; MetronomeState.save(act); metroTick++ },
             onAccent = { a -> MetronomeState.accentEvery = a; MetronomeState.save(act); metroTick++ },
+            onDuck = { d ->
+                MetronomeState.duckMusic = d; MetronomeState.save(act)
+                if (MetronomeState.playing) MetronomeService.send(act, MetronomeService.ACTION_REFRESH)
+                metroTick++
+            },
         )
     }
 

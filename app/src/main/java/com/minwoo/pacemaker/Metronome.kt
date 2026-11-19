@@ -26,7 +26,10 @@ object MetronomeState {
 
     @Volatile var playing = false
     @Volatile var bpm = 60
-    @Volatile var volume = 0.8f
+    /** 1.0 = 100%, 최대 2.0 (200% 부스트) */
+    @Volatile var volume = 1.5f
+    /** 메트로놈 켜져 있는 동안 음악 볼륨 낮추기 (덕킹 유지) */
+    @Volatile var duckMusic = true
     /** 0 = 강세 없음, 2/3/4 = N박마다 첫 박 강세 */
     @Volatile var accentEvery = 0
     /** 시작 후 울린 박 수 */
@@ -40,13 +43,15 @@ object MetronomeState {
     fun load(ctx: Context) {
         val p = ctx.getSharedPreferences("metronome", Context.MODE_PRIVATE)
         bpm = clampBpm(p.getInt("bpm", 60))
-        volume = p.getFloat("volume", 0.8f)
+        volume = p.getFloat("volume2", 1.5f)
+        duckMusic = p.getBoolean("duck", true)
         accentEvery = p.getInt("accent", 0)
     }
 
     fun save(ctx: Context) {
         ctx.getSharedPreferences("metronome", Context.MODE_PRIVATE).edit()
-            .putInt("bpm", bpm).putFloat("volume", volume).putInt("accent", accentEvery).apply()
+            .putInt("bpm", bpm).putFloat("volume2", volume).putInt("accent", accentEvery)
+            .putBoolean("duck", duckMusic).apply()
     }
 }
 
@@ -59,16 +64,28 @@ class MetronomeEngine {
     @Volatile private var running = false
     private var thread: Thread? = null
 
-    private val click = makeClick(1500.0, 0.55)
-    private val accentClick = makeClick(2400.0, 0.9)
+    // 귀가 잘 듣는 2~3kHz 대역 + 짧은 '딱' 소리(노이즈)로 음악 위에서도 잘 들리게
+    private val click = makeClick(2200.0, 0.75)
+    private val accentClick = makeClick(3200.0, 0.9)
 
     private fun makeClick(freq: Double, gain: Double): FloatArray {
-        val n = (sr * 0.035).toInt()
-        return FloatArray(n) { i ->
+        val n = (sr * 0.06).toInt()
+        val rnd = java.util.Random(1)
+        val raw = DoubleArray(n) { i ->
             val t = i.toDouble() / sr
-            val env = exp(-t * 120.0) * minOf(1.0, i / 24.0)
-            (sin(2 * PI * freq * t) * 0.8 + sin(2 * PI * freq * 2.01 * t) * 0.2).times(env * gain).toFloat()
+            val env = exp(-t * 50.0) * minOf(1.0, i / 12.0)
+            val tone = sin(2 * PI * freq * t) * 0.7 + sin(2 * PI * freq * 1.5 * t) * 0.3
+            val noise = (rnd.nextDouble() * 2 - 1) * exp(-t * 900.0) * 0.6
+            tone * env + noise
         }
+        val peak = raw.maxOf { kotlin.math.abs(it) }.coerceAtLeast(1e-9)
+        return FloatArray(n) { (raw[it] / peak * 0.9 * gain / 0.9).toFloat() }
+    }
+
+    /** 볼륨 100% 넘으면 부드럽게 눌러서(소프트 클리핑) 더 크게 들리게 */
+    private fun shape(x: Float, vol: Float): Float {
+        val y = x * vol
+        return if (vol <= 1f) y else (kotlin.math.tanh(y * 1.5) / kotlin.math.tanh(1.5)).toFloat()
     }
 
     fun start() {
@@ -131,7 +148,7 @@ class MetronomeEngine {
                         MetronomeState.beatCount = beatIndex
                     }
                     val c = cur
-                    val v = if (c != null && pos < c.size) c[pos++] * vol else 0f
+                    val v = if (c != null && pos < c.size) shape(c[pos++], vol) else 0f
                     buf[i] = (v.coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort()
                     untilBeat -= 1.0
                 }
@@ -163,6 +180,31 @@ class MetronomeService : Service() {
 
     private val engine = MetronomeEngine()
     private var wakeLock: PowerManager.WakeLock? = null
+    private var focusHeld = false
+    private val focusRequest by lazy {
+        android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+            )
+            .setWillPauseWhenDucked(false)
+            .setOnAudioFocusChangeListener { }
+            .build()
+    }
+
+    /** 설정에 맞춰 음악 낮추기(덕킹) 유지/해제 */
+    private fun syncDuck() {
+        val am = getSystemService(android.media.AudioManager::class.java)
+        val want = MetronomeState.playing && MetronomeState.duckMusic
+        if (want && !focusHeld) {
+            focusHeld = am.requestAudioFocus(focusRequest) == android.media.AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        } else if (!want && focusHeld) {
+            am.abandonAudioFocusRequest(focusRequest)
+            focusHeld = false
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -186,6 +228,7 @@ class MetronomeService : Service() {
             stopSelf(startId)
             return START_NOT_STICKY
         }
+        syncDuck()
         getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification())
         return START_NOT_STICKY
     }
@@ -210,6 +253,7 @@ class MetronomeService : Service() {
     private fun stopMetronome() {
         MetronomeState.playing = false
         engine.stop()
+        syncDuck()
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -252,6 +296,7 @@ class MetronomeService : Service() {
     override fun onDestroy() {
         MetronomeState.playing = false
         engine.stop()
+        syncDuck()
         wakeLock?.let { if (it.isHeld) it.release() }
         super.onDestroy()
     }

@@ -41,6 +41,7 @@ data class MetroUi(
     val bpm: Int,
     val volume: Float,
     val accentEvery: Int,
+    val duckMusic: Boolean,
     val beatCount: Long,
     val elapsedS: Double,
 )
@@ -50,6 +51,7 @@ class MetroActions(
     val onBpm: (Int) -> Unit,
     val onVolume: (Float) -> Unit,
     val onAccent: (Int) -> Unit,
+    val onDuck: (Boolean) -> Unit,
 )
 
 private val BPM_PRESETS = listOf(60, 90, 120, 150, 170, 180)
@@ -173,7 +175,7 @@ fun MetronomeScreen(ui: MetroUi, act: MetroActions, pulse: Float, modifier: Modi
                 color = if (ui.playing) Color.White else Color.Black, fontSize = 26.sp, fontWeight = FontWeight.Black,
             )
             Text(
-                if (ui.playing) "화면 꺼져도 계속 울려요 · 알림창에서도 조절" else "음악이랑 같이 들려요 (음악 볼륨 안 줄어듦)",
+                if (ui.playing) "화면 꺼져도 계속 울려요 · 알림창에서도 조절" else "음악이랑 같이 들려요",
                 color = (if (ui.playing) Color.White else Color.Black).copy(alpha = 0.65f),
                 style = MaterialTheme.typography.labelMedium,
             )
@@ -207,10 +209,33 @@ fun MetronomeScreen(ui: MetroUi, act: MetroActions, pulse: Float, modifier: Modi
                 Text("${(ui.volume * 100).toInt()}%", color = P.Muted, style = MaterialTheme.typography.labelMedium)
             }
             Slider(
-                value = ui.volume, onValueChange = act.onVolume, valueRange = 0.05f..1f,
-                colors = SliderDefaults.colors(thumbColor = P.Text, activeTrackColor = P.Text, inactiveTrackColor = P.Surface2),
+                value = ui.volume, onValueChange = act.onVolume, valueRange = 0.1f..2f,
+                colors = SliderDefaults.colors(
+                    thumbColor = if (ui.volume > 1f) P.Accent else P.Text,
+                    activeTrackColor = if (ui.volume > 1f) P.Accent else P.Text,
+                    inactiveTrackColor = P.Surface2,
+                ),
             )
-            Text("폰 미디어 볼륨을 따라가요", color = P.Muted, style = MaterialTheme.typography.labelSmall)
+            Text(
+                "100% 넘으면 부스트 (소리를 눌러서 더 크게) · 전체 크기는 폰 미디어 볼륨을 따라가요",
+                color = P.Muted, style = MaterialTheme.typography.labelSmall,
+            )
+            Spacer(Modifier.height(16.dp))
+            Box(Modifier.fillMaxWidth().height(1.dp).background(P.Line))
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("켜는 동안 음악 낮추기", color = P.Text, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "메트로놈이 울리는 동안 스포티파이 소리를 계속 작게 깔아요 (끄면 원래 볼륨)",
+                        color = P.Muted, style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+                androidx.compose.material3.Switch(
+                    checked = ui.duckMusic, onCheckedChange = act.onDuck,
+                    colors = androidx.compose.material3.SwitchDefaults.colors(checkedTrackColor = P.Accent, checkedThumbColor = Color.White),
+                )
+            }
         }
         Spacer(Modifier.height(24.dp))
     }

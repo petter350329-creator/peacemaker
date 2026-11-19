@@ -81,14 +81,14 @@ class ScreenshotTest {
     )
 
     @Test fun runIdle() = shot("1_run_idle") { RunScreen(live(RunState.Phase.IDLE, null), noop) }
-    private val metroNoop = MetroActions({}, {}, {}, {})
-    private val metroOn = MetroUi(true, 60, 0.8f, 4, 9, 9.0)
+    private val metroNoop = MetroActions({}, {}, {}, {}, {})
+    private val metroOn = MetroUi(true, 60, 1.5f, 4, true, 9, 9.0)
 
     @Test fun runRunning() = shot("2_run_running") {
         RunScreen(live(RunState.Phase.RUNNING, fakeRecord()), noop, extra = { MetronomeMini(metroOn, metroNoop, 0.7f) })
     }
     @Test fun metronome() = shot("5_metronome") { MetronomeScreen(metroOn, metroNoop, 0.8f) }
-    @Test fun metronomeOff() = shot("6_metronome_off") { MetronomeScreen(MetroUi(false, 60, 0.8f, 0, 0, 0.0), metroNoop, 0f) }
+    @Test fun metronomeOff() = shot("6_metronome_off") { MetronomeScreen(MetroUi(false, 60, 1.5f, 0, true, 0, 0.0), metroNoop, 0f) }
     @Test fun summary() = shot("3_summary") { SummaryScreen(fakeRecord(), {}, {}) }
     @Test fun history() = shot("4_history") {
         val r = fakeRecord()
