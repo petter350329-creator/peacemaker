@@ -37,6 +37,19 @@ data class RunRecord(
     val avgKmh: Double get() = if (durationS > 0) distanceM / durationS * 3.6 else 0.0
     val maxKmh: Double get() = points.maxOfOrNull { it.kmh } ?: 0.0
 
+    /** 처음 목표 속도 그대로였다면 기준의 차이 (+ 늦음 / - 빠름) */
+    val originalDiffS: Double get() = durationS - distanceM * 3.6 / initialTargetKmh
+
+    /** 달리는 중에 목표 속도를 바꾼 지점들: (거리m, 새 목표 km/h) */
+    fun targetChanges(): List<Pair<Double, Double>> {
+        val out = mutableListOf<Pair<Double, Double>>()
+        var cur = initialTargetKmh
+        for (p in points) {
+            if (p.targetKmh != cur) { out += p.distM to p.targetKmh; cur = p.targetKmh }
+        }
+        return out
+    }
+
     fun splits(): List<Split> {
         val out = mutableListOf<Split>()
         if (points.size < 2) return out

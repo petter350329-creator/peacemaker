@@ -54,6 +54,7 @@ class RunService : Service() {
     private var pendingUtterances = 0
     private var gpsReadyAnnounced = false
     private var utteranceSeq = 0
+    private var stopped = false
 
     private val speechAttrs: AudioAttributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
@@ -111,6 +112,15 @@ class RunService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val active = RunState.phase == RunState.Phase.PREPARING ||
+            RunState.phase == RunState.Phase.RUNNING || RunState.phase == RunState.Phase.FINISHED
+        // 종료된 뒤 남은 알림 버튼 등으로 서비스가 다시 깨어나면 아무것도 하지 않고 바로 끝냄
+        if (!active && intent?.action != ACTION_PREPARE) {
+            if (intent?.action == ACTION_SET_SPEED) RunState.targetKmh = intent.getDoubleExtra(EXTRA_KMH, RunState.targetKmh)
+            getSystemService(NotificationManager::class.java).cancel(NOTIF_ID)
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         when (intent?.action) {
             ACTION_PREPARE -> prepare()
             ACTION_START -> startRun()
@@ -123,6 +133,7 @@ class RunService : Service() {
     }
 
     private fun prepare() {
+        stopped = false
         val notif = buildNotification("GPS 잡는 중…")
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
@@ -204,6 +215,8 @@ class RunService : Service() {
         if (!wasFinished && e.finished) {
             RunState.phase = RunState.Phase.FINISHED
             saveRecord(finished = true)
+            // 완주 후엔 GPS가 필요 없으니 안내 멘트가 끝날 시간(15초) 뒤 자동 종료
+            handler.postDelayed({ if (RunState.phase == RunState.Phase.FINISHED) stopAll() }, 15_000)
         }
     }
 
@@ -273,11 +286,15 @@ class RunService : Service() {
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             .addAction(action(ACTION_SPEED_DOWN, "◀ 느리게", 1))
             .addAction(action(ACTION_SPEED_UP, "빠르게 ▶", 2))
+            .apply {
+                // 달리는 중에는 실수 방지를 위해 종료 버튼을 안 넣음
+                if (RunState.phase != RunState.Phase.RUNNING) addAction(action(ACTION_STOP, "종료", 3))
+            }
             .build()
     }
 
     private fun updateNotification() {
-        if (RunState.phase == RunState.Phase.IDLE) return
+        if (stopped || RunState.phase == RunState.Phase.IDLE) return
         val e = RunState.engine
         val text = when (RunState.phase) {
             RunState.Phase.PREPARING -> {
@@ -291,6 +308,8 @@ class RunService : Service() {
     }
 
     private fun stopAll() {
+        if (stopped) return
+        stopped = true
         if (RunState.phase == RunState.Phase.RUNNING) {
             RunState.engine?.tick(System.currentTimeMillis())
             saveRecord(finished = false)
@@ -299,12 +318,27 @@ class RunService : Service() {
         try { locationManager.removeUpdates(listener) } catch (_: Exception) {}
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
-        if (RunState.phase != RunState.Phase.FINISHED) RunState.phase = RunState.Phase.IDLE
+        // 완주든 중단이든 종료 후엔 항상 대기 상태로. (예전엔 완주 상태가 남아서
+        // 버튼을 한 번 더 누르면 GPS 준비가 다시 시작되는 버그가 있었음)
+        RunState.phase = RunState.Phase.IDLE
+        RunState.gpsAccuracy = null
         stopForeground(STOP_FOREGROUND_REMOVE)
+        getSystemService(NotificationManager::class.java).cancel(NOTIF_ID)
         stopSelf()
     }
 
+    /** 최근 앱 목록에서 밀어서 닫았을 때: 달리는 중이 아니면 깔끔하게 종료 */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        if (RunState.phase != RunState.Phase.RUNNING) stopAll()
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
+        if (!stopped && RunState.phase != RunState.Phase.IDLE) {
+            // 시스템이 서비스를 죽인 경우에도 상태를 정리
+            if (RunState.phase == RunState.Phase.RUNNING) saveRecord(finished = false)
+            RunState.phase = RunState.Phase.IDLE
+        }
         handler.removeCallbacksAndMessages(null)
         try { locationManager.removeUpdates(listener) } catch (_: Exception) {}
         wakeLock?.let { if (it.isHeld) it.release() }

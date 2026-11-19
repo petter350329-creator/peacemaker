@@ -104,9 +104,9 @@ private fun RecordCard(r: RunRecord, onClick: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("평균 ${PaceEngine.fmtKmh(r.avgKmh)} km/h", color = P.Muted, style = MaterialTheme.typography.labelMedium)
                 Spacer(Modifier.width(8.dp))
-                Box(Modifier.size(6.dp).clip(CircleShape).background(P.diffColor(r.diffS)))
+                Box(Modifier.size(6.dp).clip(CircleShape).background(P.diffColor(r.originalDiffS)))
                 Spacer(Modifier.width(4.dp))
-                Text(diffText(r.diffS), color = P.diffColor(r.diffS), style = MaterialTheme.typography.labelMedium)
+                Text(diffText(r.originalDiffS), color = P.diffColor(r.originalDiffS), style = MaterialTheme.typography.labelMedium)
             }
         }
         if (!r.finished) {
@@ -164,13 +164,33 @@ fun SummaryScreen(r: RunRecord, onBack: () -> Unit, onDelete: () -> Unit, modifi
                 }
             }
             Spacer(Modifier.height(10.dp))
-            Box(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(P.diffColor(r.diffS).copy(alpha = 0.14f)).padding(12.dp),
+            val od = r.originalDiffS
+            val changes = r.targetChanges()
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(P.diffColor(od).copy(alpha = 0.14f)).padding(12.dp),
             ) {
                 Text(
-                    "🎯 " + diffText(r.diffS) + "  ·  목표 시속 ${PaceEngine.fmtKmh(r.initialTargetKmh)}",
-                    color = P.diffColor(r.diffS), style = MaterialTheme.typography.titleMedium,
+                    "🎯 " + diffText(od),
+                    color = P.diffColor(od), style = MaterialTheme.typography.titleMedium,
                 )
+                Text(
+                    "목표 시속 ${PaceEngine.fmtKmh(r.initialTargetKmh)} · ${"%.2f".format(r.distanceM / 1000)}km 목표 시간 " +
+                        PaceEngine.fmtClock(r.distanceM * 3.6 / r.initialTargetKmh),
+                    color = P.Muted, style = MaterialTheme.typography.labelMedium,
+                )
+                if (changes.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(P.Line))
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "목표 변경 반영 시: " + diffText(r.diffS),
+                        color = P.Text, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        changes.joinToString("  ·  ") { (d, k) -> "%.2fkm → 시속 %s".format(d / 1000, PaceEngine.fmtKmh(k)) },
+                        color = P.Muted, style = MaterialTheme.typography.labelMedium,
+                    )
+                }
             }
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

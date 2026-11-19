@@ -43,6 +43,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.minwoo.pacemaker.ui.HistoryScreen
+import com.minwoo.pacemaker.ui.MetroActions
+import com.minwoo.pacemaker.ui.MetroUi
+import com.minwoo.pacemaker.ui.MetronomeMini
+import com.minwoo.pacemaker.ui.MetronomeScreen
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.withFrameNanos
+import kotlin.math.exp
 import com.minwoo.pacemaker.ui.LiveUi
 import com.minwoo.pacemaker.ui.P
 import com.minwoo.pacemaker.ui.PacemakerTheme
@@ -70,6 +77,7 @@ class MainActivity : ComponentActivity() {
             osmdroidTileCache = File(cacheDir, "osmdroid/tiles")
         }
 
+        MetronomeState.load(this)
         askPermissions()
         setContent { PacemakerTheme { App() } }
     }
@@ -104,6 +112,7 @@ class MainActivity : ComponentActivity() {
 private sealed interface Screen {
     data object Run : Screen
     data object History : Screen
+    data object Metronome : Screen
     data class Summary(val id: Long, val from: Screen) : Screen
 }
 
@@ -140,6 +149,56 @@ private fun App() {
         while (true) { delay(500); tick++ }
     }
 
+    // 메트로놈 깜빡임: 박이 울릴 때마다 1 → 0으로 줄어드는 값
+    var pulse by remember { mutableFloatStateOf(0f) }
+    var metroTick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        var seen = -1L
+        while (true) {
+            if (MetronomeState.playing) {
+                withFrameNanos { now ->
+                    val dt = (now - MetronomeState.lastBeatNanos) / 1e9
+                    pulse = if (dt < 0) 0f else exp(-dt * 7).toFloat()
+                    val b = MetronomeState.beatCount
+                    if (b != seen && dt >= 0) { seen = b; metroTick++ }
+                }
+            } else {
+                if (pulse != 0f) pulse = 0f
+                delay(200)
+            }
+        }
+    }
+    val metroUi = remember(metroTick, tick) {
+        MetroUi(
+            playing = MetronomeState.playing,
+            bpm = MetronomeState.bpm,
+            volume = MetronomeState.volume,
+            accentEvery = MetronomeState.accentEvery,
+            beatCount = MetronomeState.beatCount,
+            elapsedS = if (MetronomeState.playing) (System.currentTimeMillis() - MetronomeState.startedAtMs) / 1000.0 else 0.0,
+        )
+    }
+    val metroAct = remember {
+        MetroActions(
+            onToggle = {
+                if (MetronomeState.playing) MetronomeService.send(act, MetronomeService.ACTION_STOP)
+                else MetronomeService.send(act, MetronomeService.ACTION_START)
+                tick++
+            },
+            onBpm = { b ->
+                val nb = MetronomeState.clampBpm(b)
+                if (nb != MetronomeState.bpm) {
+                    MetronomeState.bpm = nb
+                    MetronomeState.save(act)
+                    if (MetronomeState.playing) MetronomeService.send(act, MetronomeService.ACTION_REFRESH)
+                }
+                metroTick++
+            },
+            onVolume = { v -> MetronomeState.volume = v; MetronomeState.save(act); metroTick++ },
+            onAccent = { a -> MetronomeState.accentEvery = a; MetronomeState.save(act); metroTick++ },
+        )
+    }
+
     BackHandler(enabled = screen !is Screen.Run) {
         screen = when (val s = screen) {
             is Screen.Summary -> s.from
@@ -163,10 +222,12 @@ private fun App() {
                             },
                             onMain = {
                                 when (RunState.phase) {
-                                    RunState.Phase.IDLE, RunState.Phase.FINISHED -> {
+                                    RunState.Phase.IDLE -> {
                                         if (!act.hasLocationPermission()) act.askPermissions()
                                         else RunService.send(act, RunService.ACTION_PREPARE)
                                     }
+                                    RunState.Phase.FINISHED ->
+                                        Toast.makeText(act, "잠시 뒤 자동으로 종료돼요 (길게 누르면 바로 종료)", Toast.LENGTH_SHORT).show()
                                     RunState.Phase.PREPARING -> RunService.send(act, RunService.ACTION_START)
                                     RunState.Phase.RUNNING ->
                                         Toast.makeText(act, "정지는 길게 눌러요", Toast.LENGTH_SHORT).show()
@@ -188,8 +249,10 @@ private fun App() {
                             onBattery = { act.requestIgnoreBattery() },
                             onOpenRecord = { id -> screen = Screen.Summary(id, Screen.Run) },
                         ),
+                        extra = { MetronomeMini(metroUi, metroAct, pulse) },
                     )
                 }
+                Screen.Metronome -> MetronomeScreen(metroUi, metroAct, pulse)
                 Screen.History -> {
                     val records = remember(historyVersion) { RunRepository.list(act) }
                     HistoryScreen(records, onOpen = { screen = Screen.Summary(it, Screen.History) })
@@ -214,9 +277,17 @@ private fun App() {
             }
         }
         BottomTabs(
-            current = if (screen is Screen.Run || (screen as? Screen.Summary)?.from == Screen.Run) 0 else 1,
+            current = when {
+                screen is Screen.Run || (screen as? Screen.Summary)?.from == Screen.Run -> 0
+                screen is Screen.Metronome -> 1
+                else -> 2
+            },
             onSelect = { i ->
-                if (i == 0) screen = Screen.Run else { historyVersion++; screen = Screen.History }
+                when (i) {
+                    0 -> screen = Screen.Run
+                    1 -> screen = Screen.Metronome
+                    else -> { historyVersion++; screen = Screen.History }
+                }
             },
         )
     }
@@ -228,7 +299,7 @@ private fun BottomTabs(current: Int, onSelect: (Int) -> Unit) {
         Modifier.fillMaxWidth().background(P.Bg).padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        listOf("🏃  달리기", "📊  기록").forEachIndexed { i, label ->
+        listOf("🏃 달리기", "🎵 메트로놈", "📊 기록").forEachIndexed { i, label ->
             val sel = i == current
             Box(
                 Modifier.weight(1f).height(48.dp).clip(CircleShape)

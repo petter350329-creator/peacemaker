@@ -75,7 +75,7 @@ class RunActions(
 val PRESETS = listOf(6.0, 9.0, 12.0, 15.0)
 
 @Composable
-fun RunScreen(ui: LiveUi, act: RunActions, modifier: Modifier = Modifier) {
+fun RunScreen(ui: LiveUi, act: RunActions, modifier: Modifier = Modifier, extra: @Composable () -> Unit = {}) {
     val active = ui.phase == Phase.RUNNING || ui.phase == Phase.FINISHED
     Column(
         modifier
@@ -151,6 +151,8 @@ fun RunScreen(ui: LiveUi, act: RunActions, modifier: Modifier = Modifier) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (k in PRESETS) SpeedPill(k, k == ui.targetKmh, Modifier.weight(1f)) { act.onSpeed(k) }
         }
+        Spacer(Modifier.height(10.dp))
+        extra()
 
         Spacer(Modifier.height(20.dp))
         MainButton(ui, act)
@@ -160,9 +162,9 @@ fun RunScreen(ui: LiveUi, act: RunActions, modifier: Modifier = Modifier) {
                 textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
             )
         }
-        if (ui.phase == Phase.FINISHED && ui.lastSavedId != null) {
+        if ((ui.phase == Phase.FINISHED || ui.phase == Phase.IDLE) && ui.lastSavedId != null) {
             Spacer(Modifier.height(10.dp))
-            OutlineButton("기록 자세히 보기 →") { act.onOpenRecord(ui.lastSavedId) }
+            OutlineButton(if (ui.phase == Phase.IDLE) "방금 뛴 기록 보기 →" else "기록 자세히 보기 →") { act.onOpenRecord(ui.lastSavedId) }
         }
 
         if (ui.lastMessage.isNotBlank() && active) {
@@ -348,9 +350,9 @@ private fun SpeedPill(kmh: Double, selected: Boolean, modifier: Modifier, onClic
 private fun MainButton(ui: LiveUi, act: RunActions) {
     val (label, sub, color) = when (ui.phase) {
         Phase.IDLE -> Triple("GPS 준비", "바톤 받기 전에 미리 눌러두세요", P.Ready)
-        Phase.PREPARING -> Triple("출발!", "누르는 순간부터 기록 시작", P.Good)
+        Phase.PREPARING -> Triple("출발!", "누르면 기록 시작 · 길게 누르면 취소", P.Good)
         Phase.RUNNING -> Triple("달리는 중", "정지하려면 길게 누르세요", P.Surface2)
-        Phase.FINISHED -> Triple("완주 🎉", "길게 누르면 종료", P.Surface2)
+        Phase.FINISHED -> Triple("완주 🎉", "15초 뒤 자동 종료 · 길게 누르면 바로 종료", P.Surface2)
     }
     val textColor = if (ui.phase == Phase.PREPARING) Color.Black else Color.White
     Column(

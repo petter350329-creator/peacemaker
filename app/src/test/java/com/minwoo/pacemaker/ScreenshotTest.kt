@@ -17,6 +17,10 @@ import com.minwoo.pacemaker.ui.RunActions
 import com.minwoo.pacemaker.ui.RunScreen
 import com.minwoo.pacemaker.ui.SummaryScreen
 import com.minwoo.pacemaker.ui.UiFlags
+import com.minwoo.pacemaker.ui.MetroActions
+import com.minwoo.pacemaker.ui.MetroUi
+import com.minwoo.pacemaker.ui.MetronomeMini
+import com.minwoo.pacemaker.ui.MetronomeScreen
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -48,7 +52,8 @@ class ScreenshotTest {
             d += kmh / 3.6; s += 1.0
             val a = d / 400 * 2 * Math.PI
             val x = cos(a) * 70; val y = sin(a) * 40
-            pts += TrackPoint(s, lat0 + y / 111320, lon0 + x / (111320 * cos(Math.toRadians(lat0))), d, kmh, 9.0)
+            val tgt = if (d in 2030.0..2250.0) 6.0 else 9.0
+            pts += TrackPoint(s, lat0 + y / 111320, lon0 + x / (111320 * cos(Math.toRadians(lat0))), d, kmh, tgt)
         }
         return RunRecord(1762934400000, 4000.0, d, s, s - 1600.0, 9.0, true, pts)
     }
@@ -76,7 +81,14 @@ class ScreenshotTest {
     )
 
     @Test fun runIdle() = shot("1_run_idle") { RunScreen(live(RunState.Phase.IDLE, null), noop) }
-    @Test fun runRunning() = shot("2_run_running") { RunScreen(live(RunState.Phase.RUNNING, fakeRecord()), noop) }
+    private val metroNoop = MetroActions({}, {}, {}, {})
+    private val metroOn = MetroUi(true, 60, 0.8f, 4, 9, 9.0)
+
+    @Test fun runRunning() = shot("2_run_running") {
+        RunScreen(live(RunState.Phase.RUNNING, fakeRecord()), noop, extra = { MetronomeMini(metroOn, metroNoop, 0.7f) })
+    }
+    @Test fun metronome() = shot("5_metronome") { MetronomeScreen(metroOn, metroNoop, 0.8f) }
+    @Test fun metronomeOff() = shot("6_metronome_off") { MetronomeScreen(MetroUi(false, 60, 0.8f, 0, 0, 0.0), metroNoop, 0f) }
     @Test fun summary() = shot("3_summary") { SummaryScreen(fakeRecord(), {}, {}) }
     @Test fun history() = shot("4_history") {
         val r = fakeRecord()
